@@ -35,19 +35,10 @@ jobs:
           PROXY6_API_KEY: ${{ secrets.PROXY6_API_KEY }}
         run: uv run pytest -v
 
-  publish-pypi:
-    name: Build & publish to PyPI
-    # Only fire on a real GitHub Release publish — workflow_dispatch runs
-    # exercise the test job above but never push to PyPI.
-    if: github.event_name == 'release'
+  build:
+    name: Build distributions
     needs: integration-tests
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/proxy6-sdk
-    permissions:
-      # Required for PyPI Trusted Publishing (OIDC). No long-lived token.
-      id-token: write
     steps:
       - uses: actions/checkout@v5
 
@@ -56,7 +47,8 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Verify tag matches package version
+      - name: Verify tag matches package version (release only)
+        if: github.event_name == 'release'
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
@@ -67,8 +59,55 @@ jobs:
             exit 1
           fi
 
-      - name: Build distributions
+      - name: Build sdist + wheel
         run: uv build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    # Manual dry-run path: workflow_dispatch lets you exercise the publish
+    # pipeline against TestPyPI without cutting a real GitHub Release.
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/proxy6-sdk
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    # Real publish path: only fires on a published GitHub Release.
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/proxy6-sdk
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
