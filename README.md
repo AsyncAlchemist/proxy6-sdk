@@ -74,19 +74,50 @@ ProxyType.HTTP | ProxyType.SOCKS
 
 ### Errors
 
-The API uses an envelope of `{"status":"no","error_id":N,"error":"..."}`. The
-SDK raises `Proxy6APIError` with `error_id` and `error` populated. The
-documented codes are exported as `proxy6.ERROR_CODES`.
+The API uses an envelope of `{"status":"no","error_id":N,"error":"..."}`. Each
+documented error code has its own exception subclass, so you can catch
+specific failures directly:
 
 ```python
-from proxy6 import Proxy6APIError
+from proxy6 import (
+    InsufficientBalanceError,
+    NotEnoughProxiesError,
+    Proxy6APIError,
+)
 
 try:
-    client.buy(count=1, period=7, country="ru", version=Version.IPV6)
+    client.buy(count=100, period=30, country="ru", version=Version.IPV6)
+except InsufficientBalanceError:
+    topup()
+except NotEnoughProxiesError:
+    wait_and_retry()
 except Proxy6APIError as e:
-    if e.error_id == 400:
-        ...  # low balance
+    # Catch-all for anything else
+    log.error("proxy6 %s: %s", e.error_id, e.error)
 ```
+
+| Code | Exception                  | Meaning                                  |
+| ---: | -------------------------- | ---------------------------------------- |
+|   30 | `UnknownError`             | Unknown error                            |
+|  100 | `AuthError`                | Wrong API key                            |
+|  105 | `IPNotAllowedError`        | IP restriction blocked the call          |
+|  110 | `MethodError`              | Wrong method name                        |
+|  200 | `InvalidCountError`        | Bad proxies quantity                     |
+|  210 | `InvalidPeriodError`       | Bad period (days)                        |
+|  220 | `InvalidCountryError`      | Bad country code                         |
+|  230 | `InvalidIdsError`          | Bad proxy id list                        |
+|  240 | `InvalidVersionError`      | Bad proxy version                        |
+|  250 | `InvalidDescriptionError`  | Bad technical description                |
+|  260 | `InvalidProxyTypeError`    | Bad proxy type/protocol                  |
+|  270 | `InvalidPortError`         | Bad port                                 |
+|  280 | `InvalidProxyStringError`  | Bad `ip:port:user:pass` for `check`      |
+|  300 | `NotEnoughProxiesError`    | Stock too low                            |
+|  400 | `InsufficientBalanceError` | Zero / low balance                       |
+|  404 | `NotFoundError`            | Element not found                        |
+|  410 | `PriceCalculationError`    | Cost ≤ 0                                 |
+
+The raw documented messages are also exposed as the `proxy6.ERROR_CODES`
+dict.
 
 ### Rate limiting
 

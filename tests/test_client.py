@@ -6,11 +6,16 @@ import pytest
 import responses
 
 from proxy6 import (
+    AuthError,
+    InsufficientBalanceError,
+    NotEnoughProxiesError,
+    NotFoundError,
     Proxy6APIError,
     Proxy6Client,
     State,
     Version,
 )
+from proxy6.exceptions import ERROR_CODES
 from proxy6.client import DEFAULT_BASE_URL
 from proxy6.models import PriceQuote, PriceTable
 
@@ -348,16 +353,48 @@ def test_check_requires_arg(client: Proxy6Client) -> None:
 
 
 @responses.activate
-def test_api_error_raises(client: Proxy6Client) -> None:
+def test_api_error_raises_specific_subclass(client: Proxy6Client) -> None:
     responses.add(
         responses.GET,
         _url("buy"),
         json={"status": "no", "error_id": 400, "error": "Error no money"},
     )
-    with pytest.raises(Proxy6APIError) as exc:
+    with pytest.raises(InsufficientBalanceError) as exc:
         client.buy(count=1, period=7, country="ru", version=Version.IPV6)
+    # Subclasses are catchable as the base too.
+    assert isinstance(exc.value, Proxy6APIError)
     assert exc.value.error_id == 400
     assert "Error no money" in exc.value.error
+
+
+@pytest.mark.parametrize(
+    "error_id,expected_cls",
+    [
+        (100, AuthError),
+        (300, NotEnoughProxiesError),
+        (400, InsufficientBalanceError),
+        (404, NotFoundError),
+    ],
+)
+def test_error_dispatch_returns_subclass(
+    error_id: int, expected_cls: type[Proxy6APIError]
+) -> None:
+    err = Proxy6APIError(error_id, "msg")
+    assert isinstance(err, expected_cls)
+    assert err.error_id == error_id
+
+
+def test_error_dispatch_falls_back_for_unknown_code() -> None:
+    err = Proxy6APIError(9999, "unmapped")
+    assert type(err) is Proxy6APIError
+    assert err.error_id == 9999
+
+
+def test_all_documented_codes_have_subclass() -> None:
+    for code in ERROR_CODES:
+        err = Proxy6APIError(code, "x")
+        assert type(err) is not Proxy6APIError, f"code {code} has no subclass"
+        assert err.error_id == code
 
 
 def test_requires_api_key() -> None:
