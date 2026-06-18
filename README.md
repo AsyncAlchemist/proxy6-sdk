@@ -1,5 +1,11 @@
 # proxy6-sdk
 
+[![CI](https://github.com/AsyncAlchemist/proxy6-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/AsyncAlchemist/proxy6-sdk/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/AsyncAlchemist/proxy6-sdk/graph/badge.svg)](https://codecov.io/gh/AsyncAlchemist/proxy6-sdk)
+[![PyPI version](https://badge.fury.io/py/proxy6-sdk.svg)](https://pypi.org/project/proxy6-sdk/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > **Unofficial** — this project is a community-built client for
 > [Proxy6.net](https://proxy6.net/) and is **not affiliated with, endorsed by,
 > or supported by Proxy6.net**. All trademarks belong to their respective

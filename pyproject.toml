@@ -30,6 +30,7 @@ dependencies = [
 Homepage = "https://github.com/AsyncAlchemist/proxy6-sdk"
 Repository = "https://github.com/AsyncAlchemist/proxy6-sdk"
 Issues = "https://github.com/AsyncAlchemist/proxy6-sdk/issues"
+Changelog = "https://github.com/AsyncAlchemist/proxy6-sdk/blob/main/CHANGELOG.md"
 "API Documentation" = "https://proxy6.net/en/developers"
 
 [build-system]
@@ -44,6 +45,7 @@ module-name = "proxy6"
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",
+    "pytest-cov>=7.1.0",
     "python-dotenv>=1.2.2",
     "responses>=0.26.1",
 ]
@@ -54,3 +56,15 @@ addopts = "-ra"
 markers = [
     "integration: hits the real proxy6.net API; skipped without PROXY6_API_KEY",
 ]
+
+[tool.coverage.run]
+source = ["proxy6"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "pragma: no cover",
+]
+show_missing = true
