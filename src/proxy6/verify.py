@@ -327,6 +327,13 @@ class ProxyVerifier:
         *,
         version: Version | None = None,
     ) -> LeakCheck:
-        """As :meth:`check`, but also compare the seen IP to ``proxy.host``."""
+        """As :meth:`check`, but also compare the seen IP to the exit IP
+        (``proxy.ip``).
+
+        For proxy6's IPv6 product the SOCKS endpoint (``proxy.host``) is on
+        IPv4 while the destination sees the IPv6 exit (``proxy.ip``), so the
+        expected match is against ``proxy.ip``. For the IPv4 product the two
+        are equal in practice.
+        """
         result = self.check(proxy, version=version)
-        return LeakCheck(result=result, expected_ip=proxy.host)
+        return LeakCheck(result=result, expected_ip=proxy.ip)

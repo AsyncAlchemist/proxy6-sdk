@@ -8,6 +8,19 @@ plus the [PEP 440](https://peps.python.org/pep-0440/) pre-release scheme.
 
 ## [Unreleased]
 
+### Changed
+- **Breaking.** `Proxy.version` now infers from the exit IP (`Proxy.ip`)
+  rather than the SOCKS endpoint (`Proxy.host`). proxy6's IPv6 product
+  exposes a v4 SOCKS endpoint with a v6 exit, so the previous
+  host-based inference labelled v6 proxies as IPv4. Callers asking "what
+  version is this proxy?" almost always mean "what does the destination
+  see," which is the exit. IPv4 proxies (where `host == ip`) are
+  unaffected.
+- **Breaking.** `ProxyVerifier.check_leak()` now compares the verifier's
+  seen IP against `proxy.ip` (the exit) instead of `proxy.host` (the
+  SOCKS endpoint). For the IPv6 product this fixes false-positive leak
+  reports; for IPv4 proxies the two were already equal.
+
 ## [0.1.0a2] - 2026-06-18
 
 ### Added

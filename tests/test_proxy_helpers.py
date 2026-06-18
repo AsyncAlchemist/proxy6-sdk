@@ -59,16 +59,34 @@ def _account() -> AccountInfo:
 
 
 class TestVersionProperty:
-    def test_ipv4_literal_reports_ipv4(self) -> None:
+    def test_ipv4_exit_reports_ipv4(self) -> None:
         assert _make_proxy(host="192.0.2.1").version == Version.IPV4
 
-    def test_ipv6_literal_reports_ipv6(self) -> None:
+    def test_ipv6_exit_reports_ipv6(self) -> None:
         assert _make_proxy(host="2001:db8::1").version == Version.IPV6
 
-    def test_non_ip_falls_back_to_ipv4(self) -> None:
-        # Proxy6 always returns IP literals, but the fallback path matters
-        # for hand-constructed test data and mock objects.
-        assert _make_proxy(host="example.com").version == Version.IPV4
+    def test_v4_socks_with_v6_exit_reports_ipv6(self) -> None:
+        # proxy6's IPv6 product: SOCKS endpoint on IPv4 (so any client can
+        # reach it) but the destination sees the IPv6 exit. `version` should
+        # follow the exit, not the SOCKS endpoint.
+        p = Proxy(
+            id=1, ip="2001:db8::1", host="192.0.2.1", port=8000,
+            user="u", password="p", type=ProxyType.HTTP,
+            date=None, date_end=None, unixtime=None, unixtime_end=None,
+            active=True,
+        )
+        assert p.version == Version.IPV6
+
+    def test_non_ip_exit_falls_back_to_ipv4(self) -> None:
+        # Proxy6 always returns IP literals in `ip`, but the fallback path
+        # matters for hand-constructed test data and mock objects.
+        p = Proxy(
+            id=1, ip="example.com", host="example.com", port=8000,
+            user="u", password="p", type=ProxyType.HTTP,
+            date=None, date_end=None, unixtime=None, unixtime_end=None,
+            active=True,
+        )
+        assert p.version == Version.IPV4
 
 
 class TestAsRequestsDict:

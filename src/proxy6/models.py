@@ -66,14 +66,18 @@ class Proxy:
 
     @property
     def version(self) -> Version:
-        """Address family inferred from ``host``.
+        """Address family inferred from the exit IP (``ip``), not ``host``.
 
         Returns :class:`Version.IPV6` for IPv6 literals, :class:`Version.IPV4`
-        otherwise. Can't distinguish ``IPV4`` from ``IPV4_SHARED`` (both are
-        IPv4 literals); use the SKU you bought if you need that.
+        otherwise. For proxy6's IPv6 product the SOCKS endpoint (``host``) is
+        an IPv4 address so any client can reach it, but the exit (``ip``) is
+        IPv6 — and the exit is what destinations (and verifiers) actually see,
+        so it's what callers usually mean by "what version is this proxy?".
+        Can't distinguish ``IPV4`` from ``IPV4_SHARED`` (both are IPv4
+        literals); use the SKU you bought if you need that.
         """
         try:
-            addr = ipaddress.ip_address(self.host)
+            addr = ipaddress.ip_address(self.ip)
         except ValueError:
             return Version.IPV4
         return Version.IPV6 if isinstance(addr, ipaddress.IPv6Address) else Version.IPV4

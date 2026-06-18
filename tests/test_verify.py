@@ -227,6 +227,27 @@ class TestLeakCheck:
         assert leak.result.ip == "198.51.100.99"
         assert leak.expected_ip == "192.0.2.1"
 
+    @responses.activate
+    def test_check_leak_uses_exit_ip_not_socks_host(self) -> None:
+        # proxy6's IPv6 product: v4 SOCKS endpoint, v6 exit. The destination
+        # sees the v6 exit, so the leak check should compare against `ip`
+        # (the exit), not `host` (the SOCKS endpoint).
+        proxy = Proxy(
+            id=3, ip="2001:db8::1", host="192.0.2.1", port=8000,
+            user="u", password="p", type=ProxyType.HTTP,
+            date=datetime(2026, 1, 1), date_end=datetime(2026, 2, 1),
+            unixtime=0, unixtime_end=0, active=True, country="us",
+        )
+        responses.add(
+            responses.GET,
+            "https://api6.ipify.org/",
+            json={"ip": "2001:db8::1"},
+        )
+        leak = ProxyVerifier(provider=IpifyProvider()).check_leak(proxy)
+        assert leak.matches
+        assert not leak.leaked
+        assert leak.expected_ip == "2001:db8::1"
+
 
 class TestVerifierTransport:
     @responses.activate
