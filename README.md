@@ -82,6 +82,163 @@ with Proxy6Client() as client:
 | `prolong(period, ids)`                              | Extend existing proxies                        |
 | `delete(ids?, descr?)`                              | Delete by id or by comment                     |
 | `check(ids?, proxy?)`                               | Liveness check via id or `ip:port:user:pass`   |
+| `proxies(refresh?)`                                 | Cached view of the full pool (filter locally)  |
+| `invalidate_proxy_cache()`                          | Drop the pool cache                            |
+| `select_proxy(country?, version?, active?, ...)`    | Pick one proxy from the pool, raises if nothing matches |
+| `requests_session(country?, version?, ...)`         | One-shot: pick a proxy → ready `requests.Session` |
+| `httpx_client(country?, ..., **kwargs)`             | One-shot: pick a proxy → ready `httpx.Client`  |
+| `httpx_async_client(country?, ..., **kwargs)`       | One-shot: pick a proxy → ready `httpx.AsyncClient` |
+| `aiohttp_kwargs(country?, ...)`                     | One-shot: pick a proxy → kwargs for `aiohttp` requests |
+
+### Using your proxies in an HTTP client
+
+The SDK ships convenience helpers at two levels so you don't have to stitch
+together proxy URLs by hand.
+
+**One-liner on the client** — picks a proxy from the cached pool (auto-filtered
+to `active=True` by default) and hands back a ready-to-use HTTP client:
+
+```python
+with Proxy6Client() as c:
+    with c.requests_session(country="us") as s:
+        r = s.get("https://api.ipify.org?format=json", timeout=10)
+```
+
+**Per-proxy** — when you want to pick the proxy yourself first (e.g. inspect
+it, reuse it across calls) and produce the client from there:
+
+```python
+with Proxy6Client() as c:
+    proxy = c.select_proxy(country="us", version=Version.IPV4)
+    # equivalently: c.proxies().filter(country="us", version=Version.IPV4).random()
+    with proxy.requests_session() as s:
+        r = s.get("https://api.ipify.org?format=json", timeout=10)
+```
+
+Both forms share the cache — back-to-back calls don't re-hit `/getproxy`.
+Filter args (`country`, `version`, `active`, `descr`, `type`) are the same
+as :meth:`ProxyList.filter`. If nothing matches, a `LookupError` is raised
+with the criteria that failed.
+
+#### Examples per library
+
+**requests**
+
+```python
+from proxy6 import Proxy6Client
+
+with Proxy6Client() as c:
+    # One-shot.
+    with c.requests_session(country="us") as s:
+        r = s.get("https://api.ipify.org?format=json", timeout=10)
+        print(r.json()["ip"])
+
+    # Per-proxy (lets you inspect/reuse `proxy`).
+    proxy = c.select_proxy(country="us")
+    with proxy.requests_session() as s:
+        r = s.get("https://api.ipify.org?format=json", timeout=10)
+```
+
+**httpx (sync)**
+
+```python
+from proxy6 import Proxy6Client
+
+with Proxy6Client() as c:
+    with c.httpx_client(country="us", timeout=10) as client:
+        r = client.get("https://api.ipify.org?format=json")
+        print(r.json()["ip"])
+
+    # Per-proxy.
+    proxy = c.select_proxy(country="us")
+    with proxy.httpx_client(timeout=10) as client:
+        r = client.get("https://api.ipify.org?format=json")
+```
+
+**httpx (async)**
+
+```python
+import asyncio
+from proxy6 import Proxy6Client
+
+async def main() -> None:
+    with Proxy6Client() as c:
+        async with c.httpx_async_client(country="us", timeout=10) as client:
+            r = await client.get("https://api.ipify.org?format=json")
+            print(r.json()["ip"])
+
+asyncio.run(main())
+```
+
+**aiohttp** — `aiohttp` has no session-level proxy setting, so the proxy
+goes on each request. The helper returns a kwargs dict you spread in:
+
+```python
+import asyncio
+import aiohttp
+from proxy6 import Proxy6Client
+
+async def main() -> None:
+    with Proxy6Client() as c:
+        kw = c.aiohttp_kwargs(country="us")  # {"proxy": "http://u:p@host:port"}
+        async with aiohttp.ClientSession() as s:
+            async with s.get("https://api.ipify.org?format=json", **kw) as r:
+                print((await r.json())["ip"])
+
+asyncio.run(main())
+```
+
+**subprocess / curl / wget** — env-var format for shelling out:
+
+```python
+import os
+import subprocess
+from proxy6 import Proxy6Client
+
+with Proxy6Client() as c:
+    proxy = c.select_proxy(country="us")
+    subprocess.run(
+        ["curl", "https://api.ipify.org"],
+        env={**os.environ, **proxy.as_env()},
+    )
+```
+
+**Just give me the URL / dict** — if you're plugging into another HTTP lib
+not covered above:
+
+```python
+proxy.auth_url()              # "http://user:pass@host:port"
+proxy.as_requests_dict()      # {"http": auth_url, "https": auth_url}
+proxy.aiohttp_kwargs()        # {"proxy": auth_url}
+```
+
+`httpx` and `aiohttp` are imported lazily — they only need to be installed
+if you actually call the corresponding helper.
+
+### Caching the proxy pool
+
+`get_proxy()` is the raw API call and always hits the wire. For the
+"give me my pool, I'll filter locally" workflow there's `proxies()`, which
+fetches the full pool once and reuses it for repeated calls:
+
+```python
+pool = client.proxies()                       # one API call
+us_v4 = pool.filter(country="us", version=Version.IPV4, active=True)
+proxy = us_v4.random()
+client.proxies()                              # served from cache, no HTTP
+```
+
+- Default TTL is 24 hours. Override with
+  `Proxy6Client(proxy_cache_ttl=3600)` (seconds) or pass `None` to disable
+  caching entirely.
+- The cache is **automatically invalidated** after any state-changing call
+  (`buy`, `prolong`, `delete`, `set_descr`), so newly-bought proxies show up
+  on the next `proxies()` call.
+- Force a refresh with `client.proxies(refresh=True)` or drop the cache
+  explicitly with `client.invalidate_proxy_cache()`.
+- `ProxyList` is iterable / sized / indexable and supports `filter(...)`
+  (`country`, `version`, `active`, `descr`, `type`) and `random(*, rng=None)`
+  so most pool workflows don't need to touch `client.proxies` directly.
 
 ### Authentication
 
@@ -183,6 +340,54 @@ client = Proxy6Client(rate_limiter=RateLimiter(max_requests=10, period=1.0))
 # Disable entirely (you're handling throttling yourself).
 client = Proxy6Client(rate_limiter=None)
 ```
+
+### Verifying a proxy against a live IP-check service
+
+`ProxyVerifier` routes a request through a proxy and asks a public
+"what's my IP" service what it sees, so you can confirm the proxy is
+egressing as expected and your real IP isn't leaking. By default it walks
+through four built-in providers in order and returns the first success,
+so a single provider being down or blocking your IP doesn't break the
+check.
+
+```python
+from proxy6 import Proxy6Client, ProxyVerifier
+
+with Proxy6Client() as c:
+    proxy = c.proxies().filter(country="us", active=True).random()
+
+with ProxyVerifier() as v:                              # fallback enabled by default
+    leak = v.check_leak(proxy)
+    print(leak.result.ip, leak.result.country, leak.leaked, leak.result.provider)
+```
+
+`check_leak()` returns a `LeakCheck` whose `leaked` property is `True`
+whenever the IP the service saw differs from `proxy.host` — i.e. either
+the proxy isn't doing its job, or traffic bypassed it entirely.
+
+Built-in providers (the default chain, in order):
+
+| Provider                    | Endpoint                                          | Data returned                                                                   |
+| --------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `IpifyProvider`             | `api.ipify.org` / `api6.ipify.org`                | IP only — smallest moving part                                                  |
+| `IcanhazipProvider`         | `ipv4.icanhazip.com` / `ipv6.icanhazip.com`       | IP only, plain text                                                             |
+| `IfconfigCoProvider`        | `ipv4.ifconfig.co/json` / `ipv6.ifconfig.co/json` | IP + country + region + city + ASN                                              |
+| `IpinfoIoProvider`          | `ipinfo.io/json`                                  | IP + country + region + city + ASN (token optional for higher free-tier limits) |
+
+Pin a single provider (no fallback) or control the chain explicitly:
+
+```python
+# Single provider — failures raise instead of falling back.
+ProxyVerifier(provider=IpifyProvider()).check(proxy)
+
+# Custom fallback chain, tried in order.
+ProxyVerifier(providers=[MyChecker(), IpifyProvider(), IcanhazipProvider()]).check(proxy)
+```
+
+If every provider in the chain fails, `check()` raises a single
+`VerificationError` whose message lists each failure in order — no silent
+fallbacks, no truncated history. To use a custom provider or run your own
+endpoint, see [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 ### Using a custom session
 

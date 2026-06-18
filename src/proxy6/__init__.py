@@ -1,6 +1,11 @@
 """Python SDK for the Proxy6.net HTTP API."""
 
-from .client import DEFAULT_BASE_URL, DEFAULT_TIMEOUT, Proxy6Client
+from .client import (
+    DEFAULT_BASE_URL,
+    DEFAULT_PROXY_CACHE_TTL,
+    DEFAULT_TIMEOUT,
+    Proxy6Client,
+)
 from .enums import ProxyType, State, Version
 from .ratelimit import DEFAULT_RATE_LIMITER, RateLimiter
 from .exceptions import (
@@ -40,11 +45,29 @@ from .models import (
     Renewal,
     SetDescrResult,
 )
+from .verify import (
+    DEFAULT_VERIFICATION_PROVIDER,
+    DEFAULT_VERIFICATION_PROVIDERS,
+    DEFAULT_VERIFICATION_TIMEOUT,
+    IcanhazipProvider,
+    IfconfigCoProvider,
+    IpifyProvider,
+    IpinfoIoProvider,
+    LeakCheck,
+    ProxyVerifier,
+    VerificationError,
+    VerificationProvider,
+    VerificationResult,
+)
 
 __all__ = [
     "DEFAULT_BASE_URL",
+    "DEFAULT_PROXY_CACHE_TTL",
     "DEFAULT_RATE_LIMITER",
     "DEFAULT_TIMEOUT",
+    "DEFAULT_VERIFICATION_PROVIDER",
+    "DEFAULT_VERIFICATION_PROVIDERS",
+    "DEFAULT_VERIFICATION_TIMEOUT",
     "ERROR_CODES",
     "AccountInfo",
     "AuthError",
@@ -53,6 +76,8 @@ __all__ = [
     "CountryList",
     "DeleteResult",
     "IPNotAllowedError",
+    "IcanhazipProvider",
+    "IfconfigCoProvider",
     "InsufficientBalanceError",
     "InvalidCountError",
     "InvalidCountryError",
@@ -63,6 +88,9 @@ __all__ = [
     "InvalidProxyStringError",
     "InvalidProxyTypeError",
     "InvalidVersionError",
+    "IpifyProvider",
+    "IpinfoIoProvider",
+    "LeakCheck",
     "MethodError",
     "NotEnoughProxiesError",
     "NotFoundError",
@@ -77,10 +105,14 @@ __all__ = [
     "Proxy6Error",
     "ProxyList",
     "ProxyType",
+    "ProxyVerifier",
     "RateLimiter",
     "Renewal",
     "SetDescrResult",
     "State",
     "UnknownError",
+    "VerificationError",
+    "VerificationProvider",
+    "VerificationResult",
     "Version",
 ]

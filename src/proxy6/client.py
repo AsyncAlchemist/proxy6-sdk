@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import random as _random
+import time
 from datetime import datetime
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 import requests
 
-from .enums import State, Version
+from .enums import ProxyType, State, Version
 from .exceptions import Proxy6APIError, Proxy6Error
 from .ratelimit import DEFAULT_RATE_LIMITER, RateLimiter
 from .models import (
@@ -27,8 +29,12 @@ from .models import (
     SetDescrResult,
 )
 
+if TYPE_CHECKING:
+    import httpx
+
 DEFAULT_BASE_URL = "https://px6.link/api"
 DEFAULT_TIMEOUT = 30.0
+DEFAULT_PROXY_CACHE_TTL = 86400.0  # 24 hours
 API_KEY_ENV_VAR = "PROXY6_API_KEY"
 
 
@@ -83,6 +89,7 @@ class Proxy6Client:
         timeout: float = DEFAULT_TIMEOUT,
         session: requests.Session | None = None,
         rate_limiter: RateLimiter | None = DEFAULT_RATE_LIMITER,
+        proxy_cache_ttl: float | None = DEFAULT_PROXY_CACHE_TTL,
     ) -> None:
         key = api_key if api_key is not None else os.environ.get(API_KEY_ENV_VAR)
         if not key:
@@ -99,6 +106,12 @@ class Proxy6Client:
         # clients share a single module-level limiter so multiple clients in
         # the same process stay under the documented 3 req/s cap together.
         self.rate_limiter = rate_limiter
+        # In-process cache of the full proxy pool, refreshed at most once per
+        # ``proxy_cache_ttl`` seconds and invalidated after any state-changing
+        # call. ``None`` disables caching entirely.
+        self.proxy_cache_ttl = proxy_cache_ttl
+        self._proxy_cache: ProxyList | None = None
+        self._proxy_cache_at: float = 0.0
 
     def __enter__(self) -> Proxy6Client:
         return self
@@ -127,6 +140,165 @@ class Proxy6Client:
         url = f"{self.base_url}/{self.api_key}/{method}/"
         clean = {k: v for k, v in (params or {}).items() if v is not None}
         return self._do_get(url, clean)
+
+    def invalidate_proxy_cache(self) -> None:
+        """Drop the cached proxy list. Next ``proxies()`` call will re-fetch."""
+        self._proxy_cache = None
+        self._proxy_cache_at = 0.0
+
+    def _proxy_cache_fresh(self) -> bool:
+        if self._proxy_cache is None or self.proxy_cache_ttl is None:
+            return False
+        return (time.monotonic() - self._proxy_cache_at) <= self.proxy_cache_ttl
+
+    def proxies(self, *, refresh: bool = False) -> ProxyList:
+        """Cached view of your full proxy pool (state=ALL).
+
+        Returns the same shape as :meth:`get_proxy`, but the underlying API
+        call happens at most once per ``proxy_cache_ttl`` seconds (24h by
+        default). The cache is automatically dropped after any state-changing
+        call (``buy``, ``prolong``, ``delete``, ``set_descr``). Pass
+        ``refresh=True`` to force a re-fetch now.
+
+        Filter the result client-side with :meth:`ProxyList.filter` and pick
+        one with :meth:`ProxyList.random` — both work on the cached list
+        without hitting the API again. For server-side filters (``descr``,
+        pagination, ``State.EXPIRING``) call :meth:`get_proxy` directly.
+        """
+        if refresh or not self._proxy_cache_fresh():
+            self._proxy_cache = self.get_proxy(state=State.ALL)
+            self._proxy_cache_at = time.monotonic()
+        return self._proxy_cache
+
+    def select_proxy(
+        self,
+        *,
+        country: str | None = None,
+        version: Version | int | None = None,
+        active: bool | None = True,
+        descr: str | None = None,
+        type: ProxyType | str | None = None,
+        rng: _random.Random | None = None,
+    ) -> Proxy:
+        """Pick one proxy from the cached pool that matches the given filters.
+
+        ``active`` defaults to ``True`` — expired proxies usually aren't what
+        you want for routing. Pass ``active=None`` to include them. The
+        other filters default to ``None`` (no filtering on that attribute).
+        Raises :class:`LookupError` when nothing matches.
+        """
+        pool = self.proxies().filter(
+            country=country,
+            version=version,
+            active=active,
+            descr=descr,
+            type=type,
+        )
+        if not pool:
+            criteria = {
+                "country": country,
+                "version": version,
+                "active": active,
+                "descr": descr,
+                "type": type,
+            }
+            active_criteria = {k: v for k, v in criteria.items() if v is not None}
+            raise LookupError(
+                f"no proxy in pool matches filters: {active_criteria}"
+            )
+        return pool.random(rng=rng)
+
+    def requests_session(
+        self,
+        *,
+        country: str | None = None,
+        version: Version | int | None = None,
+        active: bool | None = True,
+        descr: str | None = None,
+        type: ProxyType | str | None = None,
+        rng: _random.Random | None = None,
+        session: requests.Session | None = None,
+    ) -> requests.Session:
+        """Pick a proxy and return a ``requests.Session`` preconfigured for it.
+
+        One-liner for the common case::
+
+            with client.requests_session(country="us") as s:
+                s.get(url)
+        """
+        return self.select_proxy(
+            country=country,
+            version=version,
+            active=active,
+            descr=descr,
+            type=type,
+            rng=rng,
+        ).requests_session(session=session)
+
+    def httpx_client(
+        self,
+        *,
+        country: str | None = None,
+        version: Version | int | None = None,
+        active: bool | None = True,
+        descr: str | None = None,
+        type: ProxyType | str | None = None,
+        rng: _random.Random | None = None,
+        **kwargs: Any,
+    ) -> "httpx.Client":
+        """Pick a proxy and return an ``httpx.Client`` routed through it.
+
+        Extra ``**kwargs`` are forwarded to ``httpx.Client``.
+        """
+        return self.select_proxy(
+            country=country,
+            version=version,
+            active=active,
+            descr=descr,
+            type=type,
+            rng=rng,
+        ).httpx_client(**kwargs)
+
+    def httpx_async_client(
+        self,
+        *,
+        country: str | None = None,
+        version: Version | int | None = None,
+        active: bool | None = True,
+        descr: str | None = None,
+        type: ProxyType | str | None = None,
+        rng: _random.Random | None = None,
+        **kwargs: Any,
+    ) -> "httpx.AsyncClient":
+        """Pick a proxy and return an ``httpx.AsyncClient`` routed through it."""
+        return self.select_proxy(
+            country=country,
+            version=version,
+            active=active,
+            descr=descr,
+            type=type,
+            rng=rng,
+        ).httpx_async_client(**kwargs)
+
+    def aiohttp_kwargs(
+        self,
+        *,
+        country: str | None = None,
+        version: Version | int | None = None,
+        active: bool | None = True,
+        descr: str | None = None,
+        type: ProxyType | str | None = None,
+        rng: _random.Random | None = None,
+    ) -> dict[str, str]:
+        """Pick a proxy and return kwargs to spread into ``aiohttp`` requests."""
+        return self.select_proxy(
+            country=country,
+            version=version,
+            active=active,
+            descr=descr,
+            type=type,
+            rng=rng,
+        ).aiohttp_kwargs()
 
     def account(self) -> AccountInfo:
         """Call the API with no method to fetch account info (balance/currency)."""
@@ -232,6 +404,7 @@ class Proxy6Client:
                 "ids": _ids_param(ids) if ids is not None else None,
             },
         )
+        self.invalidate_proxy_cache()
         return SetDescrResult(account=AccountInfo.from_api(data), count=int(data["count"]))
 
     def buy(
@@ -259,6 +432,7 @@ class Proxy6Client:
         for p in proxies_raw:
             p.setdefault("country", data.get("country", country))
         proxies = [Proxy.from_api(p) for p in proxies_raw]
+        self.invalidate_proxy_cache()
         return Order(
             account=AccountInfo.from_api(data),
             order_id=int(data["order_id"]),
@@ -290,6 +464,7 @@ class Proxy6Client:
             )
             for r in renewals_raw
         ]
+        self.invalidate_proxy_cache()
         return ProlongResult(
             account=AccountInfo.from_api(data),
             order_id=int(data["order_id"]),
@@ -318,6 +493,7 @@ class Proxy6Client:
                 "descr": descr,
             },
         )
+        self.invalidate_proxy_cache()
         return DeleteResult(account=AccountInfo.from_api(data), count=int(data["count"]))
 
     def check(

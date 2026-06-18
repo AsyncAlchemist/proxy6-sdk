@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import ipaddress
+import random as _random
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Iterator
 
 from .enums import ProxyType, Version
+
+if TYPE_CHECKING:
+    import aiohttp
+    import httpx
+    import requests
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -56,6 +63,95 @@ class Proxy:
     def auth_url(self, scheme: str = "http") -> str:
         """Return a ``scheme://user:pass@host:port`` URL for use with HTTP libs."""
         return f"{scheme}://{self.user}:{self.password}@{self.host}:{self.port}"
+
+    @property
+    def version(self) -> Version:
+        """Address family inferred from ``host``.
+
+        Returns :class:`Version.IPV6` for IPv6 literals, :class:`Version.IPV4`
+        otherwise. Can't distinguish ``IPV4`` from ``IPV4_SHARED`` (both are
+        IPv4 literals); use the SKU you bought if you need that.
+        """
+        try:
+            addr = ipaddress.ip_address(self.host)
+        except ValueError:
+            return Version.IPV4
+        return Version.IPV6 if isinstance(addr, ipaddress.IPv6Address) else Version.IPV4
+
+    def as_requests_dict(self, scheme: str = "http") -> dict[str, str]:
+        """Return the proxies dict shape ``requests`` expects.
+
+        Drop-in for ``requests.get(..., proxies=proxy.as_requests_dict())``
+        or ``session.proxies.update(...)``. Same URL is used for both
+        ``http`` and ``https`` destinations — Proxy6 HTTP proxies tunnel
+        HTTPS via CONNECT.
+        """
+        url = self.auth_url(scheme)
+        return {"http": url, "https": url}
+
+    def as_env(self, scheme: str = "http") -> dict[str, str]:
+        """Return env-var mapping for subprocess / shell tools (curl, wget, ...).
+
+        Includes both upper- and lower-case keys because tools disagree on
+        which they read. Drop-in for
+        ``subprocess.run(..., env={**os.environ, **proxy.as_env()})``.
+        """
+        url = self.auth_url(scheme)
+        return {
+            "HTTP_PROXY": url,
+            "HTTPS_PROXY": url,
+            "ALL_PROXY": url,
+            "http_proxy": url,
+            "https_proxy": url,
+            "all_proxy": url,
+        }
+
+    def requests_session(
+        self,
+        *,
+        session: "requests.Session | None" = None,
+    ) -> "requests.Session":
+        """Return a ``requests.Session`` preconfigured to route through this proxy.
+
+        Pass ``session=`` to mutate an existing one (e.g. one with retry
+        adapters); otherwise a fresh ``Session`` is created.
+        """
+        import requests
+
+        sess = session if session is not None else requests.Session()
+        sess.proxies.update(self.as_requests_dict())
+        return sess
+
+    def httpx_client(self, **kwargs: Any) -> "httpx.Client":
+        """Return an ``httpx.Client`` routed through this proxy.
+
+        Requires ``httpx`` to be installed (not a hard dependency of this
+        SDK). Extra kwargs are forwarded to ``httpx.Client``.
+        """
+        import httpx
+
+        return httpx.Client(proxy=self.auth_url(), **kwargs)
+
+    def httpx_async_client(self, **kwargs: Any) -> "httpx.AsyncClient":
+        """Return an ``httpx.AsyncClient`` routed through this proxy.
+
+        Requires ``httpx`` to be installed. Extra kwargs are forwarded.
+        """
+        import httpx
+
+        return httpx.AsyncClient(proxy=self.auth_url(), **kwargs)
+
+    def aiohttp_kwargs(self) -> dict[str, str]:
+        """Return kwargs to spread into ``aiohttp`` request calls.
+
+        ``aiohttp`` has no session-level proxy setting, so the proxy must be
+        passed on each request::
+
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, **proxy.aiohttp_kwargs()) as r:
+                    ...
+        """
+        return {"proxy": self.auth_url()}
 
 
 @dataclass(slots=True)
@@ -111,11 +207,75 @@ class CountryList:
 
 @dataclass(slots=True)
 class ProxyList:
-    """Result of ``getproxy``."""
+    """Result of ``getproxy``.
+
+    Iterable / indexable / sized — ``for p in plist``, ``len(plist)`` and
+    ``plist[0]`` all do what you'd expect. ``random()`` and ``filter()``
+    are provided for the common "pool" workflow.
+    """
 
     account: AccountInfo
     list_count: int
     proxies: list[Proxy] = field(default_factory=list)
+
+    def __iter__(self) -> Iterator[Proxy]:
+        return iter(self.proxies)
+
+    def __len__(self) -> int:
+        return len(self.proxies)
+
+    def __getitem__(self, index: int) -> Proxy:
+        return self.proxies[index]
+
+    def __bool__(self) -> bool:
+        return bool(self.proxies)
+
+    def random(self, *, rng: _random.Random | None = None) -> Proxy:
+        """Return one proxy chosen uniformly at random.
+
+        Raises ``IndexError`` if the list is empty. Pass ``rng`` for
+        deterministic selection in tests.
+        """
+        if not self.proxies:
+            raise IndexError("ProxyList is empty")
+        chooser = rng.choice if rng is not None else _random.choice
+        return chooser(self.proxies)
+
+    def filter(
+        self,
+        *,
+        country: str | None = None,
+        version: Version | int | None = None,
+        active: bool | None = None,
+        descr: str | None = None,
+        type: ProxyType | str | None = None,
+    ) -> ProxyList:
+        """Return a new ``ProxyList`` narrowed to proxies matching every given
+        attribute. ``None`` means "don't filter on this attribute".
+        """
+        version_int = int(version) if version is not None else None
+        type_str: str | None
+        if type is None:
+            type_str = None
+        else:
+            type_str = type.value if isinstance(type, ProxyType) else str(type)
+
+        matched: list[Proxy] = []
+        for p in self.proxies:
+            if country is not None and p.country != country:
+                continue
+            if active is not None and p.active != active:
+                continue
+            if descr is not None and p.descr != descr:
+                continue
+            if type_str is not None:
+                p_type = p.type.value if isinstance(p.type, ProxyType) else str(p.type)
+                if p_type != type_str:
+                    continue
+            if version_int is not None and int(p.version) != version_int:
+                continue
+            matched.append(p)
+        return ProxyList(account=self.account, list_count=len(matched), proxies=matched)
 
 
 @dataclass(slots=True)
