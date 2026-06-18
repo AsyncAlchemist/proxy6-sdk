@@ -8,6 +8,45 @@ plus the [PEP 440](https://peps.python.org/pep-0440/) pre-release scheme.
 
 ## [Unreleased]
 
+## [0.1.0a3] - 2026-06-18
+
+### Changed
+- **Breaking.** `Proxy.version` now infers from the exit IP (`Proxy.ip`)
+  rather than the SOCKS endpoint (`Proxy.host`). proxy6's IPv6 product
+  exposes a v4 SOCKS endpoint with a v6 exit, so the previous
+  host-based inference labelled v6 proxies as IPv4. Callers asking "what
+  version is this proxy?" almost always mean "what does the destination
+  see," which is the exit. IPv4 proxies (where `host == ip`) are
+  unaffected.
+- **Breaking.** `ProxyVerifier.check_leak()` now compares the verifier's
+  seen IP against `proxy.ip` (the exit) instead of `proxy.host` (the
+  SOCKS endpoint). For the IPv6 product this fixes false-positive leak
+  reports; for IPv4 proxies the two were already equal.
+
+### Added
+- `VerificationProvider` may now declare a
+  `supported_versions: Container[Version]` attribute listing the address
+  families it can verify. `ProxyVerifier.check()` skips providers whose
+  set doesn't include the proxy's family (without counting as a failure),
+  raising a `VerificationError` only if no eligible provider is left.
+  Existing custom providers without this attribute are treated as
+  supporting all families, so nothing breaks.
+- All four built-in providers accept a `supported_versions=` constructor
+  kwarg for per-instance overrides (e.g.
+  `IpifyProvider(supported_versions={Version.IPV4})`).
+- `ALL_PROXY_VERSIONS` — the default "both families" frozenset, exported
+  from the top-level package.
+
+### Fixed
+- **`IfconfigCoProvider` was previously broken.** It pointed at
+  `ipv4.ifconfig.co` and `ipv6.ifconfig.co`, neither of which actually
+  resolves. The provider now uses the dual-stack apex `ifconfig.co/json`
+  for both families and lets the proxy decide which family to route over.
+- **`IpinfoIoProvider` now defaults to IPv4 only.** `ipinfo.io` publishes
+  no AAAA record, so IPv6 proxies can't reach it — the verifier now
+  skips it for IPv6 instead of emitting a confusing transport error.
+  Pass `supported_versions=` to override (e.g. for a v6-reachable mirror).
+
 ### Changed
 - **Breaking.** `Proxy.version` now infers from the exit IP (`Proxy.ip`)
   rather than the SOCKS endpoint (`Proxy.host`). proxy6's IPv6 product
@@ -103,6 +142,7 @@ First alpha release. The API surface is expected to change before `0.1.0`.
   push / PR; the release workflow runs the full suite (including
   integration) when a GitHub Release is published.
 
-[Unreleased]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a2...HEAD
+[Unreleased]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a3...HEAD
+[0.1.0a3]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a2...v0.1.0a3
 [0.1.0a2]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a1...v0.1.0a2
 [0.1.0a1]: https://github.com/AsyncAlchemist/proxy6-sdk/releases/tag/v0.1.0a1
