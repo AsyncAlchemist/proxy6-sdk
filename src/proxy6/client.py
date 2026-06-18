@@ -10,6 +10,7 @@ import requests
 
 from .enums import State, Version
 from .exceptions import Proxy6APIError, Proxy6Error
+from .ratelimit import DEFAULT_RATE_LIMITER, RateLimiter
 from .models import (
     AccountInfo,
     CheckResult,
@@ -81,6 +82,7 @@ class Proxy6Client:
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT,
         session: requests.Session | None = None,
+        rate_limiter: RateLimiter | None = DEFAULT_RATE_LIMITER,
     ) -> None:
         key = api_key if api_key is not None else os.environ.get(API_KEY_ENV_VAR)
         if not key:
@@ -93,6 +95,10 @@ class Proxy6Client:
         self.timeout = timeout
         self._session = session or requests.Session()
         self._owns_session = session is None
+        # ``rate_limiter=None`` disables throttling entirely. By default all
+        # clients share a single module-level limiter so multiple clients in
+        # the same process stay under the documented 3 req/s cap together.
+        self.rate_limiter = rate_limiter
 
     def __enter__(self) -> Proxy6Client:
         return self
@@ -104,10 +110,10 @@ class Proxy6Client:
         if self._owns_session:
             self._session.close()
 
-    def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        url = f"{self.base_url}/{self.api_key}/{method}/"
-        clean = {k: v for k, v in (params or {}).items() if v is not None}
-        resp = self._session.get(url, params=clean, timeout=self.timeout)
+    def _do_get(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.rate_limiter is not None:
+            self.rate_limiter.acquire()
+        resp = self._session.get(url, params=params, timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") != "yes":
@@ -117,18 +123,15 @@ class Proxy6Client:
             )
         return data
 
+    def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"{self.base_url}/{self.api_key}/{method}/"
+        clean = {k: v for k, v in (params or {}).items() if v is not None}
+        return self._do_get(url, clean)
+
     def account(self) -> AccountInfo:
         """Call the API with no method to fetch account info (balance/currency)."""
         url = f"{self.base_url}/{self.api_key}/"
-        resp = self._session.get(url, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("status") != "yes":
-            raise Proxy6APIError(
-                error_id=int(data.get("error_id", 0)),
-                error=str(data.get("error", "unknown")),
-            )
-        return AccountInfo.from_api(data)
+        return AccountInfo.from_api(self._do_get(url))
 
     def get_price(
         self,

@@ -2,6 +2,7 @@
 
 from .client import DEFAULT_BASE_URL, DEFAULT_TIMEOUT, Proxy6Client
 from .enums import ProxyType, State, Version
+from .ratelimit import DEFAULT_RATE_LIMITER, RateLimiter
 from .exceptions import (
     ERROR_CODES,
     AuthError,
@@ -42,6 +43,7 @@ from .models import (
 
 __all__ = [
     "DEFAULT_BASE_URL",
+    "DEFAULT_RATE_LIMITER",
     "DEFAULT_TIMEOUT",
     "ERROR_CODES",
     "AccountInfo",
@@ -75,6 +77,7 @@ __all__ = [
     "Proxy6Error",
     "ProxyList",
     "ProxyType",
+    "RateLimiter",
     "Renewal",
     "SetDescrResult",
     "State",

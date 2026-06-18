@@ -39,9 +39,13 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",
+    "python-dotenv>=1.2.2",
     "responses>=0.26.1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "integration: hits the real proxy6.net API; skipped without PROXY6_API_KEY",
+]

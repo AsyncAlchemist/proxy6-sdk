@@ -34,7 +34,9 @@ def _url(method: str) -> re.Pattern[str]:
 
 @pytest.fixture
 def client() -> Proxy6Client:
-    return Proxy6Client(api_key=API_KEY)
+    # Disable throttling in unit tests so the suite stays fast. Rate limiter
+    # behavior is covered separately in test_ratelimit.py.
+    return Proxy6Client(api_key=API_KEY, rate_limiter=None)
 
 
 @responses.activate
@@ -424,5 +426,5 @@ def test_context_manager_closes_session() -> None:
         re.compile(r".*/test_key/$"),
         json=ACCOUNT_FIELDS,
     )
-    with Proxy6Client(api_key=API_KEY) as c:
+    with Proxy6Client(api_key=API_KEY, rate_limiter=None) as c:
         c.account()

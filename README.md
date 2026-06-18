@@ -147,8 +147,22 @@ dict.
 ### Rate limiting
 
 The API allows **3 requests per second**; over that limit it returns HTTP 429.
-The SDK does not throttle for you — wrap calls in your own scheduler if you
-fan out widely.
+The SDK ships with a thread-safe sliding-window limiter that all
+`Proxy6Client` instances share by default, so you don't have to think about
+it — concurrent calls just block long enough to stay under the cap.
+
+```python
+from proxy6 import Proxy6Client, RateLimiter
+
+# Default — uses the process-wide DEFAULT_RATE_LIMITER (3/s).
+client = Proxy6Client()
+
+# Custom limit (e.g. you have a higher-tier agreement).
+client = Proxy6Client(rate_limiter=RateLimiter(max_requests=10, period=1.0))
+
+# Disable entirely (you're handling throttling yourself).
+client = Proxy6Client(rate_limiter=None)
+```
 
 ### Using a custom session
 
