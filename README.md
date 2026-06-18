@@ -23,7 +23,12 @@ Requires Python 3.13+.
 ```python
 from proxy6 import Proxy6Client, Version
 
+# Pass the key explicitly...
 with Proxy6Client(api_key="YOUR_KEY") as client:
+    ...
+
+# ...or set PROXY6_API_KEY in the environment and omit it.
+with Proxy6Client() as client:
     info = client.account()
     print(f"Balance: {info.balance} {info.currency}")
 
@@ -57,6 +62,26 @@ with Proxy6Client(api_key="YOUR_KEY") as client:
 | `prolong(period, ids)`                              | Extend existing proxies                        |
 | `delete(ids?, descr?)`                              | Delete by id or by comment                     |
 | `check(ids?, proxy?)`                               | Liveness check via id or `ip:port:user:pass`   |
+
+### Authentication
+
+The client resolves the API key in this order:
+
+1. The `api_key=` constructor argument
+2. The `PROXY6_API_KEY` environment variable
+
+If neither is set, `Proxy6Client()` raises `ValueError`. The SDK does **not**
+load `.env` files itself — if you keep your key in `.env`, use
+[python-dotenv](https://github.com/theskumar/python-dotenv) in your
+application:
+
+```python
+from dotenv import load_dotenv
+from proxy6 import Proxy6Client
+
+load_dotenv()
+client = Proxy6Client()
+```
 
 ### Enums
 

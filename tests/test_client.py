@@ -16,7 +16,7 @@ from proxy6 import (
     Version,
 )
 from proxy6.exceptions import ERROR_CODES
-from proxy6.client import DEFAULT_BASE_URL
+from proxy6.client import API_KEY_ENV_VAR, DEFAULT_BASE_URL
 from proxy6.models import PriceQuote, PriceTable
 
 API_KEY = "test_key"
@@ -397,9 +397,24 @@ def test_all_documented_codes_have_subclass() -> None:
         assert err.error_id == code
 
 
-def test_requires_api_key() -> None:
+def test_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(API_KEY_ENV_VAR, raising=False)
     with pytest.raises(ValueError):
         Proxy6Client(api_key="")
+    with pytest.raises(ValueError):
+        Proxy6Client()
+
+
+def test_picks_up_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(API_KEY_ENV_VAR, "from_env")
+    c = Proxy6Client()
+    assert c.api_key == "from_env"
+
+
+def test_explicit_arg_beats_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(API_KEY_ENV_VAR, "from_env")
+    c = Proxy6Client(api_key="explicit")
+    assert c.api_key == "explicit"
 
 
 @responses.activate

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -27,6 +28,7 @@ from .models import (
 
 DEFAULT_BASE_URL = "https://px6.link/api"
 DEFAULT_TIMEOUT = 30.0
+API_KEY_ENV_VAR = "PROXY6_API_KEY"
 
 
 def _ids_param(ids: Iterable[int | str] | str | int) -> str:
@@ -61,23 +63,32 @@ def _normalize_list(raw: Any) -> list[dict[str, Any]]:
 class Proxy6Client:
     """Client for the Proxy6.net API.
 
+    The API key is read in this order: the explicit ``api_key`` argument, then
+    the ``PROXY6_API_KEY`` environment variable. A ``ValueError`` is raised if
+    neither is set.
+
     Example:
-        client = Proxy6Client(api_key="...")
+        client = Proxy6Client(api_key="...")          # explicit
+        client = Proxy6Client()                       # reads PROXY6_API_KEY
         info = client.get_price(count=10, period=30, version=Version.IPV6)
         print(info.price, info.price_single)
     """
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT,
         session: requests.Session | None = None,
     ) -> None:
-        if not api_key:
-            raise ValueError("api_key is required")
-        self.api_key = api_key
+        key = api_key if api_key is not None else os.environ.get(API_KEY_ENV_VAR)
+        if not key:
+            raise ValueError(
+                f"api_key is required (pass it explicitly or set the "
+                f"{API_KEY_ENV_VAR} environment variable)"
+            )
+        self.api_key = key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._session = session or requests.Session()
