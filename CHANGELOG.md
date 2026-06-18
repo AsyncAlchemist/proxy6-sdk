@@ -8,6 +8,55 @@ plus the [PEP 440](https://peps.python.org/pep-0440/) pre-release scheme.
 
 ## [Unreleased]
 
+## [0.1.0a2] - 2026-06-18
+
+### Added
+- `ProxyVerifier` — pluggable wrapper that routes a request through a proxy
+  and asks an IP-check service what it sees, returning a normalized
+  `VerificationResult` (IP plus optional country / region / city / ASN).
+  `check_leak()` compares the seen IP to `proxy.host` and returns a
+  `LeakCheck`.
+- Built-in `VerificationProvider` implementations: `IpifyProvider`,
+  `IcanhazipProvider`, `IfconfigCoProvider`, `IpinfoIoProvider`. Each
+  selects an IPv4/IPv6 endpoint based on the proxy's address family. Users
+  can add their own by implementing the `VerificationProvider` protocol.
+- **Provider fallback**: `ProxyVerifier()` now walks
+  `DEFAULT_VERIFICATION_PROVIDERS` (all four built-ins) in order by default
+  and returns the first success — a single provider blocking datacenter IPs
+  no longer breaks the check. Pass `provider=` to pin one (no fallback) or
+  `providers=` to control the chain explicitly.
+- `VerificationError` — raised on transport failures, non-2xx responses,
+  malformed provider payloads, and (when every provider in a fallback
+  chain fails) with a combined message listing each failure.
+- `Proxy.version` — address family inferred from `host`.
+- `Proxy.as_requests_dict()` and `Proxy.as_env()` — format converters for
+  `requests.get(proxies=...)` and subprocess / `curl` env vars.
+- `Proxy.requests_session()`, `Proxy.httpx_client()`,
+  `Proxy.httpx_async_client()`, `Proxy.aiohttp_kwargs()` — one-call
+  factories that return HTTP clients preconfigured to route through the
+  proxy. `httpx` and `aiohttp` are imported lazily so they remain optional
+  dependencies.
+- `ProxyList` is now iterable, sized, indexable and truthy. New methods
+  `random(rng=None)` and `filter(country=?, version=?, active=?, descr=?,
+  type=?)` cover the common pool workflows.
+- `Proxy6Client.proxies(refresh=False)` — cached view of the full pool
+  with a 24h default TTL (`proxy_cache_ttl` is configurable; pass `None`
+  to disable caching). The cache is automatically invalidated after
+  `buy`, `prolong`, `delete`, and `set_descr`.
+- `Proxy6Client.invalidate_proxy_cache()` — explicit cache drop.
+- `Proxy6Client.select_proxy(country=?, version=?, active=?, descr=?, type=?,
+  rng=?)` — pick one proxy from the cached pool that matches the given
+  filters. Defaults to `active=True`. Raises `LookupError` with the
+  criteria summary when no proxy matches.
+- `Proxy6Client.requests_session(...)`, `httpx_client(...)`,
+  `httpx_async_client(...)`, `aiohttp_kwargs(...)` — one-call factories
+  that combine `select_proxy(...)` with the corresponding `Proxy.<lib>`
+  helper. Share the pool cache, so `client.requests_session(country="us")`
+  doesn't re-hit `/getproxy` on every call.
+- [docs/VERIFICATION.md](docs/VERIFICATION.md) — dedicated guide for
+  authoring custom verification providers and running your own
+  verification server.
+
 ## [0.1.0a1] - 2026-06-18
 
 First alpha release. The API surface is expected to change before `0.1.0`.
@@ -35,5 +84,6 @@ First alpha release. The API surface is expected to change before `0.1.0`.
   push / PR; the release workflow runs the full suite (including
   integration) when a GitHub Release is published.
 
-[Unreleased]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a1...HEAD
+[Unreleased]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a2...HEAD
+[0.1.0a2]: https://github.com/AsyncAlchemist/proxy6-sdk/compare/v0.1.0a1...v0.1.0a2
 [0.1.0a1]: https://github.com/AsyncAlchemist/proxy6-sdk/releases/tag/v0.1.0a1

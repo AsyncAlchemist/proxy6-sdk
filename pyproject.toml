@@ -1,6 +1,6 @@
 [project]
 name = "proxy6-sdk"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Unofficial Python SDK for the Proxy6.net API"
 readme = "README.md"
 license = "MIT"
@@ -44,7 +44,10 @@ module-name = "proxy6"
 
 [dependency-groups]
 dev = [
+    "aiohttp>=3.10",
+    "httpx>=0.28",
     "pytest>=9.1.0",
+    "pytest-asyncio>=0.24",
     "pytest-cov>=7.1.0",
     "python-dotenv>=1.2.2",
     "responses>=0.26.1",
@@ -53,6 +56,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+asyncio_mode = "strict"
 markers = [
     "integration: hits the real proxy6.net API; skipped without PROXY6_API_KEY",
 ]
