@@ -21,6 +21,12 @@ plus the [PEP 440](https://peps.python.org/pep-0440/) pre-release scheme.
   SOCKS endpoint). For the IPv6 product this fixes false-positive leak
   reports; for IPv4 proxies the two were already equal.
 
+### Documentation
+- `Proxy` docstring spells out the ingress/egress asymmetry: `host` is the
+  IPv4 ingress (always IPv4, even for the IPv6 product — proxy6 does not
+  offer IPv6 ingress), `ip` is the egress that destinations see. Confirmed
+  empirically against the proxy6 dashboard 2026-06-18.
+
 ## [0.1.0a2] - 2026-06-18
 
 ### Added

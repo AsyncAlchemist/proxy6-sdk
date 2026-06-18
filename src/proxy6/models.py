@@ -22,7 +22,21 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 @dataclass(slots=True)
 class Proxy:
-    """A proxy record returned by ``getproxy`` or ``buy``."""
+    """A proxy record returned by ``getproxy`` or ``buy``.
+
+    Two address fields, and the distinction matters for the IPv6 product:
+
+    * ``host`` — the SOCKS/HTTP **ingress** address. **Always IPv4**, even for
+      the IPv6 product. This is what you connect *to*. proxy6 does not offer
+      IPv6 ingress; clients without IPv4 connectivity cannot reach the proxy.
+    * ``ip`` — the **egress** address: the source IP destinations see when the
+      proxy dials out on your behalf. For the IPv4 product this equals
+      ``host``; for the IPv6 product it is an IPv6 literal (and the proxy
+      egresses v6-only, so it cannot reach v4-only destinations).
+
+    The :attr:`version` property keys off ``ip`` (the egress), since that's
+    what callers usually mean by "what version is this proxy?".
+    """
 
     id: int
     ip: str
