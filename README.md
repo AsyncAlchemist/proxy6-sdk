@@ -1,6 +1,11 @@
-# proxy6
+# proxy6-sdk
 
-A typed Python SDK for the [Proxy6.net](https://proxy6.net/en/developers) HTTP API.
+> **Unofficial** — this project is a community-built client for
+> [Proxy6.net](https://proxy6.net/) and is **not affiliated with, endorsed by,
+> or supported by Proxy6.net**. All trademarks belong to their respective
+> owners.
+
+A typed Python SDK for the [Proxy6.net API](https://proxy6.net/en/developers).
 
 Covers all nine documented endpoints — `getprice`, `getcount`, `getcountry`,
 `getproxy`, `setdescr`, `buy`, `prolong`, `delete`, `check` — plus the
@@ -8,12 +13,21 @@ keyless `account` call. Responses are parsed into dataclasses with proper
 types (`datetime`, `int`, `bool`, enums) instead of the raw strings the API
 returns.
 
+> **Status:** alpha (`0.1.0a1`). The public API may change before `0.1.0`.
+> See [CHANGELOG.md](CHANGELOG.md) for what shipped.
+
 ## Install
 
 ```sh
-uv add proxy6
+uv add proxy6-sdk
 # or
-pip install proxy6
+pip install proxy6-sdk
+```
+
+The distribution name is `proxy6-sdk`; the import name is `proxy6`:
+
+```python
+from proxy6 import Proxy6Client
 ```
 
 Requires Python 3.13+.
@@ -185,9 +199,17 @@ client = Proxy6Client(api_key="...", session=session)
 
 ```sh
 uv sync
-uv run pytest
+uv run pytest                    # unit tests only (integration is gated)
+uv run pytest -m integration     # hit the real API; needs PROXY6_API_KEY
 ```
+
+Put your key in a local `.env`; `tests/conftest.py` loads it automatically.
+
+User-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md) — add an
+entry under `[Unreleased]` whenever you ship something that affects the
+public API.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). This is an unofficial project and ships with
+no warranty of fitness for any particular purpose.

@@ -114,8 +114,8 @@ wheels = [
 ]
 
 [[package]]
-name = "proxy6"
-version = "0.1.0"
+name = "proxy6-sdk"
+version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "requests" },
