@@ -69,10 +69,12 @@ class TestProviderURLSelection:
         assert p.url(Version.IPV4) == "https://ipv4.icanhazip.com"
         assert p.url(Version.IPV6) == "https://ipv6.icanhazip.com"
 
-    def test_ifconfig_co_picks_v4_or_v6_host(self) -> None:
+    def test_ifconfig_co_uses_dual_stack_apex_for_both(self) -> None:
+        # The ipv4./ipv6. subdomains DON'T resolve. The apex is dual-stack;
+        # the proxy decides which family it uses to reach it.
         p = IfconfigCoProvider()
-        assert p.url(Version.IPV4) == "https://ipv4.ifconfig.co/json"
-        assert p.url(Version.IPV6) == "https://ipv6.ifconfig.co/json"
+        assert p.url(Version.IPV4) == "https://ifconfig.co/json"
+        assert p.url(Version.IPV6) == "https://ifconfig.co/json"
 
     def test_ipinfo_includes_token_when_present(self) -> None:
         assert IpinfoIoProvider().url(Version.IPV4) == "https://ipinfo.io/json"
@@ -345,7 +347,7 @@ class TestVerifierFallback:
     def test_all_providers_failing_raises_combined_error(self) -> None:
         responses.add(responses.GET, "https://api.ipify.org/", status=503)
         responses.add(responses.GET, "https://ipv4.icanhazip.com/", status=503)
-        responses.add(responses.GET, "https://ipv4.ifconfig.co/json", status=503)
+        responses.add(responses.GET, "https://ifconfig.co/json", status=503)
         responses.add(responses.GET, "https://ipinfo.io/json", status=503)
         with pytest.raises(VerificationError, match="all 4 verification providers"):
             ProxyVerifier().check(_ipv4_proxy())
@@ -381,3 +383,96 @@ class TestVerifierFallback:
     def test_empty_providers_raises(self) -> None:
         with pytest.raises(ValueError, match="cannot be empty"):
             ProxyVerifier(providers=[])
+
+
+class TestSupportedVersions:
+    def test_built_in_defaults_for_both_families(self) -> None:
+        # ipify/icanhazip/ifconfig.co default to supporting both families;
+        # ipinfo.io defaults to IPv4 only (the endpoint has no AAAA record).
+        assert IpifyProvider().supported_versions == frozenset(
+            {Version.IPV4, Version.IPV6}
+        )
+        assert IcanhazipProvider().supported_versions == frozenset(
+            {Version.IPV4, Version.IPV6}
+        )
+        assert IfconfigCoProvider().supported_versions == frozenset(
+            {Version.IPV4, Version.IPV6}
+        )
+        assert IpinfoIoProvider().supported_versions == frozenset({Version.IPV4})
+
+    def test_supported_versions_kwarg_overrides_default(self) -> None:
+        v4_only = IpifyProvider(supported_versions={Version.IPV4})
+        assert v4_only.supported_versions == frozenset({Version.IPV4})
+
+        v6_only = IpifyProvider(supported_versions=[Version.IPV6])
+        assert v6_only.supported_versions == frozenset({Version.IPV6})
+
+        # The kwarg accepts any iterable and is stored as a frozenset.
+        from_set = IpifyProvider(supported_versions=(Version.IPV6,))
+        assert isinstance(from_set.supported_versions, frozenset)
+
+    @responses.activate
+    def test_verifier_skips_provider_that_does_not_support_version(self) -> None:
+        # First provider only supports v6 → skipped for the v4 proxy →
+        # second provider runs.
+        v6_only = IpifyProvider(supported_versions={Version.IPV6})
+        v4_capable = IcanhazipProvider()
+        responses.add(
+            responses.GET, "https://ipv4.icanhazip.com/", body="192.0.2.1\n"
+        )
+        result = ProxyVerifier(providers=[v6_only, v4_capable]).check(_ipv4_proxy())
+        assert result.provider == "icanhazip"
+        # The skipped provider's URL should NOT have been called.
+        assert all("ipify" not in c.request.url for c in responses.calls)
+
+    @responses.activate
+    def test_all_providers_skipped_raises_explanatory_error(self) -> None:
+        # Every provider in the chain only supports v6, but the proxy is v4.
+        v6a = IpifyProvider(supported_versions={Version.IPV6})
+        v6b = IcanhazipProvider(supported_versions={Version.IPV6})
+        with pytest.raises(VerificationError, match=r"no verification provider in chain supports IPV4"):
+            ProxyVerifier(providers=[v6a, v6b]).check(_ipv4_proxy())
+        # Nothing was called.
+        assert len(responses.calls) == 0
+
+    @responses.activate
+    def test_skipped_providers_listed_in_combined_failure_message(self) -> None:
+        # One provider supports v4 and fails; another doesn't support v4 at
+        # all. The error message should mention both — the failure and the
+        # skip — so the operator can see the full picture.
+        responses.add(responses.GET, "https://api.ipify.org/", status=503)
+        v6_only = IcanhazipProvider(supported_versions={Version.IPV6})
+        with pytest.raises(VerificationError, match=r"skipped 1 provider"):
+            ProxyVerifier(providers=[IpifyProvider(), v6_only]).check(
+                _ipv4_proxy()
+            )
+
+    @responses.activate
+    def test_custom_provider_without_supported_versions_still_works(self) -> None:
+        # Backward compat: user-defined providers from before this attribute
+        # existed (no `supported_versions` set) are treated as supporting
+        # all families.
+        class Legacy:
+            name = "legacy"
+            def url(self, version: Version) -> str:
+                return "https://legacy.example/ip"
+            def parse(self, body: bytes, status_code: int) -> VerificationResult:
+                return VerificationResult(ip=body.decode().strip(), provider=self.name)
+
+        responses.add(
+            responses.GET, "https://legacy.example/ip", body="192.0.2.1"
+        )
+        result = ProxyVerifier(provider=Legacy()).check(_ipv4_proxy())
+        assert result.provider == "legacy"
+
+    @responses.activate
+    def test_ipinfo_io_skipped_for_ipv6_by_default(self) -> None:
+        # The default chain should silently skip ipinfo.io for v6 proxies
+        # and fall through to a v6-capable provider.
+        responses.add(
+            responses.GET, "https://api6.ipify.org/", json={"ip": "2001:db8::1"}
+        )
+        result = ProxyVerifier().check(_ipv6_proxy())
+        assert result.provider == "ipify"
+        # ipinfo.io was never contacted.
+        assert all("ipinfo.io" not in c.request.url for c in responses.calls)

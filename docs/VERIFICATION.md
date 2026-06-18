@@ -104,6 +104,55 @@ You don't need to catch network errors or check the status code yourself —
 `ProxyVerifier` handles that before calling `parse()`. Your `parse` should
 only fail (by raising `VerificationError`) if the body itself is malformed.
 
+### Declaring which families your provider supports
+
+Real-world IP-check services often only have an A record or only an AAAA
+record. Routing a v6-egress proxy at a v4-only endpoint will fail at the
+TCP layer with a confusing transport error.
+
+Set `supported_versions` on the provider (frozenset of `Version` values)
+and the verifier will skip your provider for unsupported families instead
+of trying and failing. Providers without this attribute are assumed to
+support both families (backward-compatible).
+
+```python
+from proxy6 import Version, VerificationResult
+
+
+class MyV4OnlyProvider:
+    name = "my-v4-only"
+    # Declares it cannot handle IPv6 proxies.
+    supported_versions = frozenset({Version.IPV4})
+
+    def url(self, version: Version) -> str:
+        return "https://my-v4-only.example/ip"
+
+    def parse(self, body: bytes, status_code: int) -> VerificationResult:
+        import json
+        return VerificationResult(
+            ip=json.loads(body)["ip"], provider=self.name
+        )
+```
+
+In a fallback chain (`ProxyVerifier(providers=[...])`) the verifier walks
+the list and silently passes over any provider whose set doesn't contain
+the proxy's family. Only failures from providers that were *actually
+tried* count toward the "all providers failed" error.
+
+All four built-in providers also accept `supported_versions=` as a
+constructor kwarg so you can restrict them without subclassing:
+
+```python
+from proxy6 import IpifyProvider, Version
+
+v4_only = IpifyProvider(supported_versions={Version.IPV4})
+```
+
+For reference, the built-in defaults are: `IpifyProvider`,
+`IcanhazipProvider`, `IfconfigCoProvider` → both families;
+`IpinfoIoProvider` → IPv4 only (the `ipinfo.io` endpoint has no AAAA
+record).
+
 ### 2. Supporting separate IPv4 / IPv6 endpoints
 
 If you want a strict address-family test, the cleanest way is to publish

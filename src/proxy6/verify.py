@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Iterable, Protocol, Sequence, runtime_checkable
 
 import requests
 
 from .enums import Version
 from .models import Proxy
+
+
+# `proxy.version` only ever returns IPV4 or IPV6 (see Proxy.version), so the
+# default "supports everything" set just covers those two. Providers that
+# only handle one family are constructed with ``supported_versions=`` set.
+ALL_PROXY_VERSIONS: frozenset[Version] = frozenset({Version.IPV4, Version.IPV6})
 
 
 class VerificationError(Exception):
@@ -42,7 +48,13 @@ class VerificationResult:
 
 @dataclass(slots=True)
 class LeakCheck:
-    """Comparison of the IP a verifier saw against ``proxy.host``."""
+    """Comparison of the IP a verifier saw against the proxy's egress (``proxy.ip``).
+
+    For the IPv6 product the SOCKS endpoint (``proxy.host``) is IPv4 while the
+    egress (``proxy.ip``) is IPv6, so the verifier's "what IP do you see"
+    answer should match ``proxy.ip``, not ``proxy.host``. For the IPv4 product
+    the two are equal in practice.
+    """
 
     result: VerificationResult
     expected_ip: str
@@ -63,6 +75,13 @@ class VerificationProvider(Protocol):
     Implement ``url(version)`` to return the URL to hit (the provider may pick
     a different host per address family) and ``parse(body, status_code)`` to
     convert the response to a :class:`VerificationResult`.
+
+    Providers MAY declare a ``supported_versions: Container[Version]``
+    attribute listing the address families they can handle. When set,
+    :class:`ProxyVerifier` skips this provider for proxies whose version
+    isn't in the set. Providers without the attribute are treated as
+    supporting all families (backward-compatible with custom providers
+    written before this attribute existed).
     """
 
     name: str
@@ -86,9 +105,22 @@ def _is_ipv6(version: Version | int) -> bool:
 
 
 class IpifyProvider:
-    """``api.ipify.org`` / ``api6.ipify.org`` — minimal, returns just the IP."""
+    """``api.ipify.org`` / ``api6.ipify.org`` — minimal, returns just the IP.
+
+    Supports both families by default; pass ``supported_versions={Version.IPV4}``
+    or ``supported_versions={Version.IPV6}`` to restrict.
+    """
 
     name = "ipify"
+
+    def __init__(
+        self,
+        *,
+        supported_versions: Iterable[Version] | None = None,
+    ) -> None:
+        self.supported_versions: frozenset[Version] = (
+            frozenset(supported_versions) if supported_versions is not None else ALL_PROXY_VERSIONS
+        )
 
     def url(self, version: Version) -> str:
         host = "api6.ipify.org" if _is_ipv6(version) else "api.ipify.org"
@@ -102,9 +134,21 @@ class IpifyProvider:
 
 
 class IcanhazipProvider:
-    """``ipv4.icanhazip.com`` / ``ipv6.icanhazip.com`` — plain-text IP only."""
+    """``ipv4.icanhazip.com`` / ``ipv6.icanhazip.com`` — plain-text IP only.
+
+    Supports both families by default; pass ``supported_versions=`` to restrict.
+    """
 
     name = "icanhazip"
+
+    def __init__(
+        self,
+        *,
+        supported_versions: Iterable[Version] | None = None,
+    ) -> None:
+        self.supported_versions: frozenset[Version] = (
+            frozenset(supported_versions) if supported_versions is not None else ALL_PROXY_VERSIONS
+        )
 
     def url(self, version: Version) -> str:
         host = "ipv6.icanhazip.com" if _is_ipv6(version) else "ipv4.icanhazip.com"
@@ -118,13 +162,28 @@ class IcanhazipProvider:
 
 
 class IfconfigCoProvider:
-    """``ifconfig.co/json`` — JSON with country/ASN, family forced by hostname."""
+    """``ifconfig.co/json`` — JSON with country/ASN.
+
+    Uses the dual-stack apex (``ifconfig.co/json``) for both families;
+    the proxy decides which family it routes to the destination over.
+    There are no ``ipv4.`` / ``ipv6.`` subdomains — they don't resolve.
+    Supports both families by default; pass ``supported_versions=`` to
+    restrict.
+    """
 
     name = "ifconfig.co"
 
+    def __init__(
+        self,
+        *,
+        supported_versions: Iterable[Version] | None = None,
+    ) -> None:
+        self.supported_versions: frozenset[Version] = (
+            frozenset(supported_versions) if supported_versions is not None else ALL_PROXY_VERSIONS
+        )
+
     def url(self, version: Version) -> str:
-        host = "ipv6.ifconfig.co" if _is_ipv6(version) else "ipv4.ifconfig.co"
-        return f"https://{host}/json"
+        return "https://ifconfig.co/json"
 
     def parse(self, body: bytes, status_code: int) -> VerificationResult:
         data = _safe_json(body)
@@ -156,12 +215,29 @@ class IpinfoIoProvider:
 
     Pass ``token`` for the free-tier 50k/mo allowance; without one the
     endpoint still works but is rate-limited more aggressively.
+
+    Defaults to **IPv4 only** because ``ipinfo.io`` has no AAAA record and
+    is not reachable over IPv6 from a proxy whose egress is IPv6 (the
+    proxy can't dial out to a v4-only host from a v6 exit). The verifier
+    will skip this provider for IPv6 proxies. If you front ipinfo
+    through a v6-reachable mirror, pass ``supported_versions=`` to opt
+    back in.
     """
 
     name = "ipinfo.io"
 
-    def __init__(self, token: str | None = None) -> None:
+    def __init__(
+        self,
+        token: str | None = None,
+        *,
+        supported_versions: Iterable[Version] | None = None,
+    ) -> None:
         self.token = token
+        self.supported_versions: frozenset[Version] = (
+            frozenset(supported_versions)
+            if supported_versions is not None
+            else frozenset({Version.IPV4})
+        )
 
     def url(self, version: Version) -> str:
         # ipinfo.io doesn't expose family-forced hostnames; the proxy decides
@@ -300,9 +376,13 @@ class ProxyVerifier:
         """Issue a request through ``proxy`` and return the normalized result.
 
         Tries each configured provider in order and returns the first one
-        that produces a usable result. If every provider fails, raises a
-        single :class:`VerificationError` summarizing each failure. If only
-        one provider is configured the behavior matches a non-fallback call.
+        that produces a usable result. Providers that declare a
+        ``supported_versions`` attribute not containing the requested family
+        are skipped (without counting as a failure). If every provider that
+        could be tried fails, raises a single :class:`VerificationError`
+        summarizing each failure; if every provider was skipped (chain is
+        unusable for this family), raises a :class:`VerificationError`
+        explaining that no provider supports the requested family.
 
         ``version`` overrides the family autodetected from ``proxy.host``;
         use it when the proxy host isn't an IP literal or you want to force
@@ -310,16 +390,34 @@ class ProxyVerifier:
         """
         v = version if version is not None else proxy.version
         errors: list[tuple[str, str]] = []
+        skipped: list[str] = []
         for provider in self.providers:
+            supported = getattr(provider, "supported_versions", None)
+            if supported is not None and v not in supported:
+                skipped.append(provider.name)
+                continue
             try:
                 return self._try_one(provider, proxy, v)
             except VerificationError as e:
                 errors.append((provider.name, str(e)))
+        if not errors:
+            # Every provider was skipped — the chain doesn't support this family.
+            skipped_str = ", ".join(skipped) if skipped else "(none)"
+            raise VerificationError(
+                f"no verification provider in chain supports {v.name}; "
+                f"skipped: {skipped_str}"
+            )
         names = ", ".join(name for name, _ in errors)
         details = "; ".join(f"{name}: {err}" for name, err in errors)
-        raise VerificationError(
+        msg = (
             f"all {len(errors)} verification providers failed ({names}): {details}"
         )
+        if skipped:
+            msg += (
+                f" (also skipped {len(skipped)} provider(s) that don't support "
+                f"{v.name}: {', '.join(skipped)})"
+            )
+        raise VerificationError(msg)
 
     def check_leak(
         self,

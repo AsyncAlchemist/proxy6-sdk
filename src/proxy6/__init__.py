@@ -46,6 +46,7 @@ from .models import (
     SetDescrResult,
 )
 from .verify import (
+    ALL_PROXY_VERSIONS,
     DEFAULT_VERIFICATION_PROVIDER,
     DEFAULT_VERIFICATION_PROVIDERS,
     DEFAULT_VERIFICATION_TIMEOUT,
@@ -61,6 +62,7 @@ from .verify import (
 )
 
 __all__ = [
+    "ALL_PROXY_VERSIONS",
     "DEFAULT_BASE_URL",
     "DEFAULT_PROXY_CACHE_TTL",
     "DEFAULT_RATE_LIMITER",

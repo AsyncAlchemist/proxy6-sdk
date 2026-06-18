@@ -187,13 +187,53 @@ def test_verifier_with_default_fallback_succeeds_against_an_active_proxy(
     with ProxyVerifier() as v:  # default fallback chain
         leak = v.check_leak(proxy)
 
-    # We can't predict *which* provider survived (datacenter blocks are
-    # common on ifconfig.co etc.), but the seen IP should match the proxy.
-    assert leak.result.ip == proxy.host, (
-        f"leak detected: saw {leak.result.ip}, expected {proxy.host} "
+    # The seen IP must match the proxy's egress (``proxy.ip``). For the
+    # IPv4 product ``proxy.host`` happens to equal ``proxy.ip`` so the
+    # distinction doesn't bite here — but use ``proxy.ip`` so the
+    # assertion stays correct if this proxy ever became dual-stack.
+    assert leak.result.ip == proxy.ip, (
+        f"leak detected: saw {leak.result.ip}, expected {proxy.ip} "
         f"(via {leak.result.provider})"
     )
     assert not leak.leaked
     assert leak.result.provider in {
         "ipify", "icanhazip", "ifconfig.co", "ipinfo.io",
     }
+
+
+def test_ipv6_proxy_version_and_leak_check_use_egress_not_ingress(
+    client: Proxy6Client,
+) -> None:
+    """proxy6's IPv6 product exposes an IPv4 SOCKS ingress with an IPv6 egress.
+
+    Regression test for the host/ip asymmetry: ``Proxy.version`` must key off
+    the egress (so the verifier picks the v6 endpoint), and ``check_leak``
+    must compare the seen IP against the egress (``proxy.ip``), not the
+    ingress (``proxy.host``). Comparing against ``host`` would report a
+    leak on every v6-product call.
+    """
+    v6_pool = client.proxies().filter(active=True, version=Version.IPV6)
+    if not v6_pool:
+        pytest.skip("no active IPv6 proxies on account; nothing to exercise")
+    proxy = v6_pool[0]
+
+    # Sanity: the proxy itself must actually be asymmetric. If host == ip the
+    # test is degenerate and doesn't cover the regression.
+    assert proxy.host != proxy.ip, (
+        f"expected IPv6 product to have v4 ingress != v6 egress; "
+        f"got host={proxy.host} ip={proxy.ip}"
+    )
+    assert proxy.version == Version.IPV6, "Proxy.version must read the egress"
+
+    with ProxyVerifier() as v:
+        leak = v.check_leak(proxy)
+
+    # Egress comparison passes; ingress comparison would have failed.
+    assert leak.result.ip == proxy.ip, (
+        f"saw {leak.result.ip} via {leak.result.provider}; expected egress {proxy.ip}"
+    )
+    assert leak.result.ip != proxy.host, (
+        "v6-product egress unexpectedly matches v4 ingress — test is degenerate"
+    )
+    assert not leak.leaked
+    assert leak.expected_ip == proxy.ip

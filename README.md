@@ -362,8 +362,10 @@ with ProxyVerifier() as v:                              # fallback enabled by de
 ```
 
 `check_leak()` returns a `LeakCheck` whose `leaked` property is `True`
-whenever the IP the service saw differs from `proxy.host` — i.e. either
-the proxy isn't doing its job, or traffic bypassed it entirely.
+whenever the IP the service saw differs from `proxy.ip` (the proxy's
+egress). For the IPv6 product `proxy.host` is the IPv4 SOCKS ingress —
+comparing against that would produce a false positive on every check —
+so the comparison is always against the egress.
 
 Built-in providers (the default chain, in order):
 
@@ -371,8 +373,8 @@ Built-in providers (the default chain, in order):
 | --------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `IpifyProvider`             | `api.ipify.org` / `api6.ipify.org`                | IP only — smallest moving part                                                  |
 | `IcanhazipProvider`         | `ipv4.icanhazip.com` / `ipv6.icanhazip.com`       | IP only, plain text                                                             |
-| `IfconfigCoProvider`        | `ipv4.ifconfig.co/json` / `ipv6.ifconfig.co/json` | IP + country + region + city + ASN                                              |
-| `IpinfoIoProvider`          | `ipinfo.io/json`                                  | IP + country + region + city + ASN (token optional for higher free-tier limits) |
+| `IfconfigCoProvider`        | `ifconfig.co/json` (dual-stack apex)              | IP + country + region + city + ASN                                              |
+| `IpinfoIoProvider` *(IPv4 only by default)* | `ipinfo.io/json`                  | IP + country + region + city + ASN; `ipinfo.io` has no AAAA record, so the verifier skips it for IPv6 proxies. Pass `supported_versions=` to override. |
 
 Pin a single provider (no fallback) or control the chain explicitly:
 
